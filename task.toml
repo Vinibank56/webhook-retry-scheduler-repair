@@ -12,15 +12,15 @@ name = "webhook-retry-scheduler-repair"
 author_name = "Vincent Onuegbunam"
 author_email = "onuegbunamvincent@gmail.com"
 author_organization = ""
-difficulty_explanation = "The seed scheduler looks plausible but violates six independent billing-adjacent timing rules at once: half-open attempt exhaustion, off-by-one exponent indexing, additive instead of multiplicative jitter, ignored Retry-After floors, missing post-exponential delay caps, and millisecond truncation when advancing timestamps. Agents must read the spec in instruction.md, discover which helper modules are already correct, and reconcile all six behaviors — a single fix rarely passes the held-out matrix."
-solution_explanation = "solution/solve.sh replaces webhooks/scheduler.py with a spec-compliant implementation that delegates jitter, time arithmetic, and policy parsing to the provided helpers, then validates the repair against the bundled visible pytest module before grading."
-verification_explanation = "tests/test.sh runs pytest over test_visible.py (mirrored in instruction.md for agent self-check) and test_hidden.py (held-out exhaustion boundaries, Retry-After dominance, cap behavior, and audit field correctness). Reward is binary: all tests pass."
+difficulty_explanation = "The seed scheduler violates six independent timing rules that each look plausible in isolation: dead-letter uses > instead of >=; backoff exponent is off-by-one; jitter is applied additively; Retry-After floors are ignored; max_delay_ms is never enforced; and timestamps truncate to whole seconds. Agents must read instruction.md, treat helper modules as canonical, and implement the full contract — patching one bug still fails held-out cases that use unpublished delivery IDs, alternate multipliers, zero jitter, and max_attempts=1. Hidden tests also verify behavioral invariants (now + delay_ms == next_attempt_at) and compare against a sealed spec reference the agent never sees."
+solution_explanation = "solution/solve.sh installs the reference scheduler.py which implements every rule in instruction.md using the provided helpers: dead-letter at failed_attempt >= max_attempts; raw_exponential with exponent (failed_attempt - 1) capped before Retry-After; Retry-After as a floor that does not alter the capped flag; multiplicative jitter via deterministic_jitter; millisecond-precise timestamps via add_milliseconds and format_instant. The script runs the full visible + hidden pytest suite before grading."
+verification_explanation = "tests/test.sh runs pytest over test_visible.py (5 documented self-check cases plus shape/validation) and test_hidden.py (edge cases, invariants, and parametrized unpublished delivery IDs checked against tests/spec_reference.py). Verification is behavior-focused: outputs must match the sealed spec reference and satisfy invariants.py (timestamp consistency, dead-letter shape, audit schema). Scoring is binary."
 domain = "systems"
 field = "backend"
 subfield = "webhooks"
-tags = ["debugging", "webhooks", "retry", "backoff", "python"]
+tags = ["debugging", "webhooks", "retry", "backoff", "python", "exponential-backoff"]
 expert_time_estimate_hours = 2.5
-relevant_experience = "Backend and platform engineering experience implementing webhook delivery pipelines with retry policies and idempotency."
+relevant_experience = "Backend and platform engineering experience implementing webhook delivery pipelines with retry policies, Retry-After compliance, and idempotency."
 conflicts_of_interest = "None"
 
 [verifier]

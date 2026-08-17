@@ -1,13 +1,37 @@
-"""Webhook delivery retry scheduler (reference implementation)."""
+"""Canonical schedule specification — sealed reference for behavior verification.
+
+This module lives only under tests/ and re-implements the contract from
+instruction.md. Hidden tests compare agent output against it for delivery IDs
+and parameter combinations never published to the agent.
+"""
 
 from __future__ import annotations
 
-from webhooks.jitter import deterministic_jitter
+import hashlib
+from datetime import datetime, timedelta, timezone
+
 from webhooks.policy import RetryPolicy
-from webhooks.time_utils import add_milliseconds, format_instant, parse_instant
 
 
-def compute_schedule(
+def _deterministic_jitter(delivery_id: str, attempt: int, jitter_ratio: float) -> tuple[float, str]:
+    digest = hashlib.sha256(f"{delivery_id}:{attempt}".encode("utf-8")).hexdigest()
+    unit = int(digest[:8], 16) / 0xFFFFFFFF
+    factor = (unit * 2.0 - 1.0) * jitter_ratio
+    return factor, f"{factor:.4f}"
+
+
+def _parse_instant(value: str) -> datetime:
+    if not value.endswith("Z"):
+        raise ValueError("timestamp must be UTC with Z suffix")
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def _format_instant(instant: datetime) -> str:
+    utc = instant.astimezone(timezone.utc)
+    return utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def compute_schedule_reference(
     *,
     delivery_id: str,
     failed_attempt: int,
@@ -15,11 +39,10 @@ def compute_schedule(
     now_iso: str,
     retry_after_seconds: int | None = None,
 ) -> dict:
-    """Schedule the next webhook delivery attempt after a failure."""
+    """Reference implementation of the instruction.md contract."""
     if failed_attempt < 1:
         raise ValueError("failed_attempt must be >= 1")
 
-    # Rule 1: dead-letter once the final allowed attempt has failed.
     if failed_attempt >= policy.max_attempts:
         return {
             "next_attempt_at": None,
@@ -36,29 +59,24 @@ def compute_schedule(
         }
 
     next_attempt_number = failed_attempt + 1
-
-    # Rule 3: exponential backoff with cap applied before Retry-After.
     raw_exponential = int(policy.base_delay_ms * (policy.multiplier ** (failed_attempt - 1)))
     capped = raw_exponential >= policy.max_delay_ms
     exponential_delay_ms = min(raw_exponential, policy.max_delay_ms)
 
-    # Rule 4: Retry-After floor (does not retroactively set capped).
     retry_after_applied_ms = None
     if retry_after_seconds is not None:
         retry_after_applied_ms = retry_after_seconds * 1000
         exponential_delay_ms = max(exponential_delay_ms, retry_after_applied_ms)
 
-    # Rule 5: multiplicative deterministic jitter.
-    jitter_factor, jitter_factor_str = deterministic_jitter(
+    jitter_factor, jitter_factor_str = _deterministic_jitter(
         delivery_id,
         next_attempt_number,
         policy.jitter_ratio,
     )
     delay_ms = round(exponential_delay_ms * (1 + jitter_factor))
 
-    # Rule 6: millisecond-precise timestamp arithmetic.
-    now = parse_instant(now_iso)
-    next_attempt_at = format_instant(add_milliseconds(now, delay_ms))
+    now = _parse_instant(now_iso)
+    next_attempt_at = _format_instant(now + timedelta(milliseconds=delay_ms))
 
     return {
         "next_attempt_at": next_attempt_at,
@@ -73,3 +91,12 @@ def compute_schedule(
             "capped": capped,
         },
     }
+
+
+def assert_timestamp_consistent(now_iso: str, delay_ms: int, next_attempt_at: str | None) -> None:
+    """Behavior invariant: next_attempt_at must equal now + delay_ms."""
+    if next_attempt_at is None:
+        return
+    now = _parse_instant(now_iso)
+    expected = _format_instant(now + timedelta(milliseconds=delay_ms))
+    assert next_attempt_at == expected

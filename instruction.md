@@ -4,6 +4,16 @@ You are taking over a webhook delivery microservice at `/app`. After a delivery 
 
 Your job is to **fix only** `/app/webhooks/scheduler.py`. The companion modules (`policy.py`, `jitter.py`, `time_utils.py`) are correct — do not modify them.
 
+## Background
+
+The scheduler sits on the hot path between your HTTP delivery worker and the outbound queue. Operations teams rely on its output for three guarantees:
+
+1. **Exhaustion** — stop retrying once the policy limit is reached.
+2. **Backoff fairness** — spread retries with exponential delay and deterministic jitter keyed by delivery ID.
+3. **Partner compliance** — honor upstream `Retry-After` headers as a minimum delay floor.
+
+The seed implementation passes smoke tests but fails production edge cases. Your fix must satisfy the full contract below, including cases **not** listed in the self-check table.
+
 ## API contract
 
 Implement `compute_schedule` in `/app/webhooks/scheduler.py`:
@@ -42,10 +52,8 @@ Always return a dict containing at least:
 
 3. **Exponential backoff (pre-jitter).** Compute:
    ```
-   exponential_delay_ms = min(
-       int(policy.base_delay_ms * (policy.multiplier ** (failed_attempt - 1))),
-       policy.max_delay_ms,
-   )
+   raw_exponential = int(policy.base_delay_ms * (policy.multiplier ** (failed_attempt - 1)))
+   exponential_delay_ms = min(raw_exponential, policy.max_delay_ms)
    ```
    The exponent uses `failed_attempt - 1`, so the first failure (`failed_attempt == 1`) waits one base interval.
 
@@ -53,6 +61,7 @@ Always return a dict containing at least:
    ```
    exponential_delay_ms = max(exponential_delay_ms, retry_after_seconds * 1000)
    ```
+   Raising the floor does **not** change whether the raw exponential was capped (see audit `capped`).
 
 5. **Deterministic jitter.** Call the provided helper:
    ```python
@@ -65,7 +74,7 @@ Always return a dict containing at least:
    ```
    Jitter is **multiplicative**, not additive milliseconds.
 
-6. **Next timestamp.** Use `webhooks.time_utils.add_milliseconds` with the parsed `now_iso` instant. Do not truncate to whole seconds.
+6. **Next timestamp.** Parse `now_iso` with `time_utils.parse_instant`, advance with `time_utils.add_milliseconds`, and format with `time_utils.format_instant`. Do not truncate to whole seconds.
 
 ### Audit block
 
@@ -76,29 +85,39 @@ Populate `audit` with:
     "exponential_delay_ms": int,          # value after backoff + Retry-After, before jitter
     "retry_after_applied_ms": int | None, # retry_after_seconds * 1000 if provided else None
     "jitter_factor": str,                 # four-decimal string from deterministic_jitter
-    "capped": bool,                       # True iff raw exponential (before Retry-After) hit max_delay_ms
+    "capped": bool,                       # True iff raw_exponential >= max_delay_ms (before Retry-After)
 }
 ```
 
+### Behavioral invariants (always true)
+
+- When scheduled: `next_attempt_at` equals `now_iso` advanced by exactly `delay_ms` milliseconds.
+- When dead-lettered: `delay_ms == 0` and all nullable fields are `None`.
+- `jitter_factor` must come from `deterministic_jitter(delivery_id, next_attempt_number, policy.jitter_ratio)`.
+
+## How to investigate
+
+1. Read `policy.py`, `jitter.py`, and `time_utils.py` — they implement the primitives correctly.
+2. Compare the seed `scheduler.py` against each scheduling rule above; several rules are violated independently.
+3. Run `pytest /tests/test_visible.py -q` while iterating. The full verifier also runs **hidden** cases with unpublished delivery IDs and policy variants.
+
 ## Self-check examples (visible tests)
 
-Use these to validate locally with `pytest /tests/test_visible.py` (the full verifier also runs hidden cases):
-
-**Policy defaults for all examples:** `base_delay_ms=1000`, `multiplier=2.0`, `max_delay_ms=10000`, `jitter_ratio=0.2`, `max_attempts=4`.
+Use these to validate locally. **Policy defaults:** `base_delay_ms=1000`, `multiplier=2.0`, `max_delay_ms=10000`, `jitter_ratio=0.2`, `max_attempts=4`.
 
 | Scenario | Inputs | Expected highlights |
 |----------|--------|---------------------|
 | First failure | `delivery_id="wh_abc123"`, `failed_attempt=1`, `now_iso="2026-03-01T00:00:00Z"` | `attempt_number=2`, `delay_ms=916`, `next_attempt_at="2026-03-01T00:00:00.916Z"`, `status="scheduled"` |
 | Second failure | same id, `failed_attempt=2` | `attempt_number=3`, `delay_ms=1684` |
-| Period boundary | `failed_attempt=1`, `now_iso="2026-03-01T00:00:00Z"` | `audit["exponential_delay_ms"] == 1000` |
+| Audit baseline | `failed_attempt=1`, `now_iso="2026-03-01T00:00:00Z"` | `audit["exponential_delay_ms"] == 1000`, `audit["capped"] is False` |
 | Dead letter | `failed_attempt=4` | `exhausted=True`, `status="dead_letter"`, `next_attempt_at is None` |
 
 ## Constraints
 
 - Edit **only** `/app/webhooks/scheduler.py`.
 - Do not change function signatures or import paths used by the verifier.
-- Do not hard-code test expectations; the grading suite imports your module dynamically.
+- Do not hard-code delivery IDs or expected outputs — hidden tests use unpublished inputs verified against the full contract.
 
 ## Done when
 
-`compute_schedule` satisfies the contract above and passes both the visible and hidden verifier suites.
+`compute_schedule` satisfies the contract and behavioral invariants above, and passes both the visible and hidden verifier suites.

@@ -56,6 +56,9 @@ def test_first_failure_backoff_and_jitter(scheduler, policy):
     assert result["audit"]["exponential_delay_ms"] == 1000
     assert result["audit"]["jitter_factor"] == "-0.0835"
     assert result["audit"]["capped"] is False
+    from invariants import assert_schedule_invariants
+
+    assert_schedule_invariants(result, now_iso="2026-03-01T00:00:00Z")
 
 
 def test_second_failure_doubles_backoff(scheduler, policy):
