@@ -1,0 +1,41 @@
+schema_version = "1.0"
+version = "1.0"
+
+artifacts = ["/app"]
+
+[task]
+name = "webhook-retry-scheduler-repair"
+description = "Repair a broken webhook delivery retry scheduler that must compute exponential backoff, deterministic jitter, Retry-After floors, and dead-letter cutoffs."
+
+[metadata]
+name = "webhook-retry-scheduler-repair"
+author_name = "Vincent Onuegbunam"
+author_email = "onuegbunamvincent@gmail.com"
+author_organization = ""
+difficulty_explanation = "The seed scheduler looks plausible but violates six independent billing-adjacent timing rules at once: half-open attempt exhaustion, off-by-one exponent indexing, additive instead of multiplicative jitter, ignored Retry-After floors, missing post-exponential delay caps, and millisecond truncation when advancing timestamps. Agents must read the spec in instruction.md, discover which helper modules are already correct, and reconcile all six behaviors — a single fix rarely passes the held-out matrix."
+solution_explanation = "solution/solve.sh replaces webhooks/scheduler.py with a spec-compliant implementation that delegates jitter, time arithmetic, and policy parsing to the provided helpers, then validates the repair against the bundled visible pytest module before grading."
+verification_explanation = "tests/test.sh runs pytest over test_visible.py (mirrored in instruction.md for agent self-check) and test_hidden.py (held-out exhaustion boundaries, Retry-After dominance, cap behavior, and audit field correctness). Reward is binary: all tests pass."
+domain = "systems"
+field = "backend"
+subfield = "webhooks"
+tags = ["debugging", "webhooks", "retry", "backoff", "python"]
+expert_time_estimate_hours = 2.5
+relevant_experience = "Backend and platform engineering experience implementing webhook delivery pipelines with retry policies and idempotency."
+conflicts_of_interest = "None"
+
+[verifier]
+timeout_sec = 600.0
+environment_mode = "shared"
+network_mode = "none"
+
+[agent]
+timeout_sec = 7200.0
+network_mode = "none"
+
+[environment]
+build_timeout_sec = 600.0
+cpus = 2
+memory_mb = 2048
+storage_mb = 4096
+gpus = 0
+network_mode = "none"
