@@ -1,10 +1,10 @@
-schema_version = "1.0"
-version = "1.0"
+schema_version = "1.4"
 
 artifacts = ["/app"]
 
 [task]
-name = "webhook-retry-scheduler-repair"
+name = "odyssey/webhook-retry-scheduler-repair"
+version = "1.0.0"
 description = "Repair a broken webhook delivery retry scheduler that must compute exponential backoff, deterministic jitter, Retry-After floors, and dead-letter cutoffs."
 
 [metadata]
@@ -26,11 +26,11 @@ conflicts_of_interest = "None"
 [verifier]
 timeout_sec = 600.0
 environment_mode = "shared"
-network_mode = "none"
+network_mode = "no-network"
 
 [agent]
 timeout_sec = 7200.0
-network_mode = "none"
+network_mode = "no-network"
 
 [environment]
 build_timeout_sec = 600.0
@@ -38,4 +38,9 @@ cpus = 2
 memory_mb = 2048
 storage_mb = 4096
 gpus = 0
-network_mode = "none"
+network_mode = "no-network"
+mcp_servers = []
+
+[verifier.env]
+
+[solution.env]
